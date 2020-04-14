@@ -17,6 +17,47 @@ int map_errno(int error)
     }
 }
 
+int remove_parent_cache_dirs(std::string mntPathString)
+{
+    size_t last_slash_idx = mntPathString.rfind('/');
+    if (std::string::npos != last_slash_idx)
+    {
+        size_t tmpDirPathLength = str_options.tmpPath.length() + 5; // 5 for "root/"
+
+        AZS_DEBUGLOGV("tmpPath is %s", str_options.tmpPath.c_str());
+
+        if (last_slash_idx > tmpDirPathLength)
+        {
+            std::string parentDirPathString = mntPathString.substr(0, last_slash_idx);
+
+            // Try removing the directory from the local file cache
+            // This will fail in the case when the directory is not empty, which is intended.
+            // This is needed, because if there are no more files in the directory, and the directory doesn't have a ".directory" blob on the service,
+            // We should remove the local directory, to reflect the state of the service.
+            AZS_DEBUGLOGV("Attempting to remove directory %s from local file cache, in case all files have been deleted.", parentDirPathString.c_str());
+            int res_remove = remove(parentDirPathString.c_str());
+            if(res_remove == 0)
+            {
+                AZS_DEBUGLOGV("Successfully removed cache dir: %s", parentDirPathString.c_str());
+
+                // Recurse
+                remove_parent_cache_dirs(parentDirPathString);
+            }
+            else
+            {
+                AZS_DEBUGLOGV("Unable to remove cache dir: %s", parentDirPathString.c_str());
+            }
+        }
+        else
+        {
+            AZS_DEBUGLOGV("will stop parent traversing here: %s, as the index of last slash is %d, while that of tmpPath is %d", mntPathString.c_str(),(int)last_slash_idx, (int)tmpDirPathLength);
+        }
+        
+    }
+
+    return 0;
+}
+
 std::string prepend_mnt_path_string(const std::string& path)
 {
     std::string result;
@@ -143,6 +184,10 @@ void gc_cache::run_gc_cache()
                     else
                     {
                         unlink(mntPath);
+
+                        // try to remove parent dirs from cache if they are empty
+                        remove_parent_cache_dirs(mntPath);
+
                         flock(fd, LOCK_UN);
 
                         //update disk space
